@@ -33,15 +33,20 @@ L.Icon.Default.imagePath = '../../assets/icons/leaflet/';
 export default class LeafletOSMMap extends Component {
   constructor(props) {
     super(props);
+
     this.state = {
       map: null,
       mapCenter: null,
       userMarker: null,
-      droppedMarker:null //used to track unsaved markers on map
+      droppedMarker:null,
     };
+
+    this.getUserLocation = this.getUserLocation.bind(this);
     this.onLocationFound = this.onLocationFound.bind(this);
     this.onLocationError = this.onLocationError.bind(this);
     this.onMapClick = this.onMapClick.bind(this);
+    this.handleSelectedPlace = this.handleSelectedPlace.bind(this);
+    this.createCenterControl = this.createCenterControl.bind(this);
   }
 
   componentDidMount() {
@@ -62,40 +67,48 @@ export default class LeafletOSMMap extends Component {
 
     this.state.map.addLayer(OSM_TILE_LAYER);
 
-    // attempt to get user's current location via device
-    this.state.map.locate({
-      setView: true,
-      enableHighAccuracy: true
-    });
+    // set "Center Map" control
+    this.createCenterControl();
 
     // configure map events
     this.state.map.on('locationfound', this.onLocationFound);
     this.state.map.on('locationerror', this.onLocationError);
     this.state.map.on('click', this.onMapClick);
-
-    //once map is ready, drop pins (user=undefined --> default)
+    
+    // if logged in ,once map is ready, drop pins (user=undefined --> default)
     fetchAndDropUserPins(undefined, this.state.map, L);
+    
+    // if routed from home screen search show result
+    if (this.props.searchResult) {
+      if (!this.props.position) {
+        this.setState({
+          mapCenter: this.props.position,
+        });
+      }
+      
+      this.handleSelectedPlace(this.props.searchResult);
+    } else {
+      this.getUserLocation();
+    }
   }
 
   /**
-   * Handle leaflet map get device location event
-   * @param {*} event
+   * Attempt to get user's current location via device
    */
-  onLocationFound(event) {
-    this.state.map.setZoom(16);
-    const userMarker = L.circleMarker(event.latlng, {
-      radius: 8,
-      weight: 3,
-      fillColor: 'red'
-    })
-      .addTo(this.state.map)
-      .bindPopup('You Are Here');
-
-    this.setState({
-      mapCenter: event.latlng,
-      userMarker: userMarker
+  getUserLocation() {
+     this.state.map.locate({
+      setView: true,
+      enableHighAccuracy: false,
+      timeout: 60000,
+      maximumAge: Infinity,
     });
+  }
 
+  /**
+   * Create control button for returning user to their current location
+   *   on the map
+   */
+  createCenterControl() {
     L.Control.Center = L.Control.extend({
       onAdd: map => {
         const center = this.state.mapCenter;
@@ -152,8 +165,28 @@ export default class LeafletOSMMap extends Component {
   }
 
   /**
+   * Handle leaflet map get device location event
+   * @param {object} event
+   */
+  onLocationFound(event) {
+    this.state.map.setZoom(16);
+    const userMarker = L.circleMarker(event.latlng, {
+      radius: 8,
+      weight: 3,
+      fillColor: 'red'
+    })
+      .addTo(this.state.map)
+      .bindPopup('You Are Here');
+
+    this.setState({
+      mapCenter: event.latlng,
+      userMarker: userMarker
+    });
+  }
+
+  /**
    * Handle leaflet map get device location failure
-   * @param {*} event
+   * @param {object} event
    */
   onLocationError(event) {
     // TODO - dummy message for now if don't have permission to get user
@@ -231,11 +264,34 @@ export default class LeafletOSMMap extends Component {
     droppedPin.bindPopup(container);
   }
 
+   /**
+   * On search input query completion, add a marker to the map 
+   * at the search result.
+   *
+   * @param {object} placeDetail 
+   */
+  handleSelectedPlace(placeDetail) {
+    this.state.map.setZoom(16);
+    if (this.state.droppedMarker) 
+      this.state.map.removeLayer(this.state.droppedMarker); 
+    this.setState({
+      droppedMarker : L.marker(placeDetail.geometry.location)
+        .addTo(this.state.map),
+      mapCenter: placeDetail.geometry.location
+    })
+    
+    //TO DO: Customize the marker popup
+    this.state.droppedMarker.bindPopup(`<b>${placeDetail.name || ''} </b>${placeDetail.formatted_address}`)
+
+    this.state.map.setView(this.state.mapCenter, 16);
+  }
+
   render() {
     return (
       <div class={style.fullscreen}>
-        <Search position={this.state.mapCenter} map={this.state.map}>
-          <SearchResults />
+        <Search position={this.state.mapCenter} map={this.state.map}
+          onResultClicked={this.handleSelectedPlace} url={this.props.url}>
+          <SearchResults url={this.props.url} onResultClicked={this.handleSelectedPlace}/>
         </Search>
         <MapPane paneHeight={this.props.paneHeight} />
       </div>
@@ -251,6 +307,11 @@ export default class LeafletOSMMap extends Component {
   }
 }
 
+/**
+ * Handles the creation of button objects
+ * @param {string} label 
+ * @param {HTML div tag} container 
+ */
 function createButton(label, container) {
   var btn = L.DomUtil.create('button', '', container);
   btn.setAttribute('type', 'button');
